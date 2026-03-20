@@ -1,16 +1,44 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useEffect } from "react";
+import DesignCanvas from "../components/canvas/DesignCanvas";
+import LeftSidebar from "../components/sidebar/LeftSidebar";
+import RightPanel from "../components/panels/RightPanel";
+import Navbar from "../components/navbar/Navbar";
+import useStore from "../store/useStore";
+import { validateDesign } from "../utils/validation";
 
-// IMPORTANT: Fully REPLACE this with your own code
-const PlaceholderIndex = () => {
-  // PLACEHOLDER: Replace this entire return statement with the user's app.
-  // The inline background color is intentionally not part of the design system.
+export default function Index() {
+  const nodes = useStore((s) => s.nodes);
+  const edges = useStore((s) => s.edges);
+  const rightPanelOpen = useStore((s) => s.rightPanelOpen);
+  const setValidationIssues = useStore((s) => s.setValidationIssues);
+
+  // Auto-validate on changes
+  useEffect(() => {
+    const issues = validateDesign(nodes, edges);
+    setValidationIssues(issues);
+  }, [nodes, edges, setValidationIssues]);
+
   return (
-    <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#fcfbf8' }}>
-      <img data-lovable-blank-page-placeholder="REMOVE_THIS" src="/placeholder.svg" alt="Your app will live here!" />
+    <div className="h-screen w-screen flex flex-col overflow-hidden bg-background">
+      <Navbar />
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Sidebar */}
+        <div className="w-[240px] flex-shrink-0">
+          <LeftSidebar />
+        </div>
+
+        {/* Canvas */}
+        <div className="flex-1 relative">
+          <DesignCanvas />
+        </div>
+
+        {/* Right Panel */}
+        {rightPanelOpen && (
+          <div className="w-[300px] flex-shrink-0">
+            <RightPanel />
+          </div>
+        )}
+      </div>
     </div>
   );
-};
-
-const Index = PlaceholderIndex;
-
-export default Index;
+}
