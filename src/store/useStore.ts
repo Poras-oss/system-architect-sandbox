@@ -1,14 +1,7 @@
 import { create } from "zustand";
 import {
-  Node,
-  Edge,
-  Connection,
-  addEdge,
-  applyNodeChanges,
-  applyEdgeChanges,
-  NodeChange,
-  EdgeChange,
-  MarkerType,
+  Node, Edge, Connection, addEdge, applyNodeChanges, applyEdgeChanges,
+  NodeChange, EdgeChange, MarkerType,
 } from "reactflow";
 
 export interface SimulationConfig {
@@ -28,6 +21,7 @@ export interface SimulationResult {
   queueDepthPeak: number;
   bottleneckNodeId: string | null;
   availability: number;
+  availabilityDowntime?: string;
   spofs: string[];
   redundancyScore: number;
   capacityCeiling: number;
@@ -43,6 +37,8 @@ export interface ValidationIssue {
   nodeIds: string[];
 }
 
+export type BgVariant = "dots" | "lines" | "none";
+
 interface AppState {
   nodes: Node[];
   edges: Edge[];
@@ -53,6 +49,9 @@ interface AppState {
   isSimulating: boolean;
   validationIssues: ValidationIssue[];
   snapToGrid: boolean;
+  bgVariant: BgVariant;
+  criticalPath: string[];
+  simHighlightsActive: boolean;
 
   onNodesChange: (changes: NodeChange[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
@@ -71,7 +70,13 @@ interface AppState {
   clearCanvas: () => void;
   loadState: (nodes: Node[], edges: Edge[]) => void;
   setSnapToGrid: (v: boolean) => void;
+  setBgVariant: (v: BgVariant) => void;
+  setCriticalPath: (path: string[]) => void;
+  setSimHighlightsActive: (v: boolean) => void;
+  clearSimHighlights: () => void;
 }
+
+const savedBg = (localStorage.getItem("sds-bg") || "dots") as BgVariant;
 
 const useStore = create<AppState>((set, get) => ({
   nodes: [],
@@ -89,6 +94,9 @@ const useStore = create<AppState>((set, get) => ({
   isSimulating: false,
   validationIssues: [],
   snapToGrid: true,
+  bgVariant: savedBg,
+  criticalPath: [],
+  simHighlightsActive: false,
 
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) }),
   onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
@@ -153,9 +161,29 @@ const useStore = create<AppState>((set, get) => ({
       }),
     });
   },
-  clearCanvas: () => set({ nodes: [], edges: [], selectedNodeId: null, simulationResult: null }),
-  loadState: (nodes, edges) => set({ nodes, edges, selectedNodeId: null, simulationResult: null }),
+  clearCanvas: () => set({ nodes: [], edges: [], selectedNodeId: null, simulationResult: null, criticalPath: [], simHighlightsActive: false }),
+  loadState: (nodes, edges) => set({ nodes, edges, selectedNodeId: null, simulationResult: null, criticalPath: [], simHighlightsActive: false }),
   setSnapToGrid: (v) => set({ snapToGrid: v }),
+  setBgVariant: (v) => {
+    localStorage.setItem("sds-bg", v);
+    set({ bgVariant: v });
+  },
+  setCriticalPath: (path) => set({ criticalPath: path }),
+  setSimHighlightsActive: (v) => set({ simHighlightsActive: v }),
+  clearSimHighlights: () => {
+    const { edges } = get();
+    // Reset edge styles
+    const resetEdges = edges.map(e => ({
+      ...e,
+      style: {
+        stroke: "hsl(218, 11%, 37%)",
+        strokeWidth: 2,
+        strokeDasharray: e.data?.edgeType === "async" ? "5 5" : undefined,
+      },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "hsl(218, 11%, 37%)" },
+    }));
+    set({ simHighlightsActive: false, criticalPath: [], simulationResult: null, edges: resetEdges });
+  },
 }));
 
 export default useStore;
