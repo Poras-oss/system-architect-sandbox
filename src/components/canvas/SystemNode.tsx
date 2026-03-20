@@ -6,8 +6,12 @@ import useStore from "../../store/useStore";
 function SystemNode({ id, data, selected }: NodeProps) {
   const def = useMemo(() => getDefinition(data.componentId), [data.componentId]);
   const simulationResult = useStore((s) => s.simulationResult);
+  const criticalPath = useStore((s) => s.criticalPath);
+  const simHighlightsActive = useStore((s) => s.simHighlightsActive);
+
   const isBottleneck = simulationResult?.bottleneckNodeId === id;
-  const isHealthy = simulationResult && !isBottleneck;
+  const isOnCriticalPath = criticalPath.includes(id);
+  const isDimmed = simHighlightsActive && !isOnCriticalPath && !isBottleneck;
 
   if (!def) return null;
 
@@ -18,7 +22,7 @@ function SystemNode({ id, data, selected }: NodeProps) {
   if (data.componentId === "sticky-note") {
     return (
       <div
-        className="rounded-lg px-3 py-2 min-w-[140px] max-w-[200px] text-xs"
+        className={`rounded-lg px-3 py-2 min-w-[140px] max-w-[200px] text-xs ${isDimmed ? "sim-dimmed" : "sim-normal"}`}
         style={{
           backgroundColor: "hsla(38, 92%, 50%, 0.08)",
           border: "1px solid hsla(38, 92%, 50%, 0.2)",
@@ -28,9 +32,7 @@ function SystemNode({ id, data, selected }: NodeProps) {
         <Handle type="target" position={Position.Top} style={{ visibility: "hidden" }} />
         <Handle type="source" position={Position.Bottom} style={{ visibility: "hidden" }} />
         <div className="font-medium mb-1">{data.label || "Note"}</div>
-        <div className="opacity-70" style={{ whiteSpace: "pre-wrap" }}>
-          {data.properties?.text || "..."}
-        </div>
+        <div className="opacity-70" style={{ whiteSpace: "pre-wrap" }}>{data.properties?.text || "..."}</div>
       </div>
     );
   }
@@ -39,73 +41,59 @@ function SystemNode({ id, data, selected }: NodeProps) {
 
   return (
     <div
-      className={`rounded-lg px-3 py-2.5 min-w-[140px] transition-shadow duration-200 ${isBottleneck ? "bottleneck-node" : ""}`}
+      className={`rounded-lg px-3 py-2.5 min-w-[140px] transition-all duration-200 ${isBottleneck ? "bottleneck-node" : ""} ${isDimmed ? "sim-dimmed" : "sim-normal"}`}
       style={{
-        backgroundColor: "hsl(240, 5%, 11%)",
-        border: `1px solid ${selected ? color : isBottleneck ? "hsl(0, 84%, 60%)" : "hsl(240, 4%, 18%)"}`,
+        backgroundColor: "hsl(var(--canvas-node-bg))",
+        border: `1px solid ${selected ? color : isBottleneck ? "hsl(0, 84%, 60%)" : "hsl(var(--canvas-node-border))"}`,
         boxShadow: selected
           ? `0 0 0 1px ${color}, 0 4px 12px rgba(0,0,0,0.3)`
           : isBottleneck
           ? "0 0 12px hsla(0, 84%, 60%, 0.3)"
-          : "0 2px 8px rgba(0,0,0,0.2)",
+          : "0 2px 8px rgba(0,0,0,0.15)",
       }}
     >
       <Handle
         type="target"
         position={Position.Top}
-        style={{ background: "hsl(240, 5%, 46%)", width: 8, height: 8, border: "2px solid hsl(240, 5%, 11%)" }}
+        className="!bg-muted-foreground !border-2"
+        style={{ borderColor: "hsl(var(--canvas-node-bg))", width: 8, height: 8 }}
       />
       <Handle
         type="source"
         position={Position.Bottom}
-        style={{ background: "hsl(240, 5%, 46%)", width: 8, height: 8, border: "2px solid hsl(240, 5%, 11%)" }}
+        className="!bg-muted-foreground !border-2"
+        style={{ borderColor: "hsl(var(--canvas-node-bg))", width: 8, height: 8 }}
       />
 
       <div className="flex items-center gap-2">
-        <div
-          className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: bgColor }}
-        >
+        <div className="w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0" style={{ backgroundColor: bgColor }}>
           <IconComp size={15} style={{ color }} />
         </div>
         <div className="min-w-0">
-          <div className="text-xs font-medium truncate" style={{ color: "hsl(240, 5%, 84%)" }}>
-            {data.label || def.label}
-          </div>
-          <div className="text-[10px] truncate" style={{ color: "hsl(240, 5%, 46%)" }}>
-            {def.description}
-          </div>
+          <div className="text-xs font-medium truncate text-foreground">{data.label || def.label}</div>
+          <div className="text-[10px] truncate text-muted-foreground">{def.description}</div>
         </div>
       </div>
 
-      {/* Property badges */}
       {data.properties?.instances > 1 && (
-        <div
-          className="mt-1.5 text-[10px] px-1.5 py-0.5 rounded inline-block"
-          style={{ backgroundColor: bgColor, color }}
-        >
+        <div className="mt-1.5 text-[10px] px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: bgColor, color }}>
           ×{data.properties.instances} instances
         </div>
       )}
       {data.componentId === "load-balancer" && data.properties?.type && (
-        <div
-          className="mt-1.5 text-[10px] px-1.5 py-0.5 rounded inline-block ml-1"
-          style={{ backgroundColor: bgColor, color }}
-        >
+        <div className="mt-1.5 text-[10px] px-1.5 py-0.5 rounded inline-block ml-1" style={{ backgroundColor: bgColor, color }}>
           {data.properties.type}
         </div>
       )}
 
       {isBottleneck && (
-        <div className="mt-1.5 text-[10px] px-1.5 py-0.5 rounded inline-block"
-          style={{ backgroundColor: "hsla(0, 84%, 60%, 0.15)", color: "hsl(0, 84%, 70%)" }}>
+        <div className="mt-1.5 text-[10px] px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: "hsla(0, 84%, 60%, 0.15)", color: "hsl(0, 84%, 70%)" }}>
           ⚠ Bottleneck
         </div>
       )}
-      {isHealthy && (
-        <div className="mt-1.5 text-[10px] px-1.5 py-0.5 rounded inline-block"
-          style={{ backgroundColor: "hsla(142, 71%, 45%, 0.1)", color: "hsl(142, 71%, 55%)" }}>
-          ✓ Healthy
+      {simHighlightsActive && isOnCriticalPath && !isBottleneck && (
+        <div className="mt-1.5 text-[10px] px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: "hsla(142, 71%, 45%, 0.1)", color: "hsl(142, 71%, 55%)" }}>
+          ✓ Critical Path
         </div>
       )}
     </div>

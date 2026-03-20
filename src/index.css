@@ -5,7 +5,66 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 @layer base {
+  /* Light theme */
   :root {
+    --background: 240 5% 96%;
+    --foreground: 240 10% 4%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 4%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 4%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 5% 92%;
+    --secondary-foreground: 240 10% 4%;
+
+    --muted: 240 5% 92%;
+    --muted-foreground: 240 4% 46%;
+
+    --accent: 240 5% 92%;
+    --accent-foreground: 240 10% 4%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.5rem;
+
+    /* Category accent colors */
+    --cat-client: 217 91% 60%;
+    --cat-network: 263 70% 50%;
+    --cat-compute: 160 84% 39%;
+    --cat-data: 38 92% 50%;
+    --cat-infra: 347 77% 50%;
+    --cat-observability: 187 85% 53%;
+
+    /* Canvas */
+    --canvas-bg: 240 5% 96%;
+    --canvas-grid: 240 5% 83%;
+    --canvas-node-bg: 0 0% 100%;
+    --canvas-node-border: 240 6% 90%;
+
+    /* Edge colors */
+    --edge-default: 218 11% 37%;
+    --edge-bottleneck: 0 84% 60%;
+    --edge-healthy: 142 71% 45%;
+
+    /* Surface layers */
+    --surface-0: 240 5% 96%;
+    --surface-1: 0 0% 100%;
+    --surface-2: 240 5% 97%;
+    --surface-3: 240 5% 93%;
+  }
+
+  /* Dark theme */
+  .dark {
     --background: 240 6% 7%;
     --foreground: 240 5% 84%;
 
@@ -34,26 +93,11 @@
     --input: 240 4% 18%;
     --ring: 221 83% 53%;
 
-    --radius: 0.5rem;
-
-    /* Category accent colors */
-    --cat-client: 217 91% 60%;
-    --cat-network: 263 70% 50%;
-    --cat-compute: 160 84% 39%;
-    --cat-data: 38 92% 50%;
-    --cat-infra: 347 77% 50%;
-    --cat-observability: 187 85% 53%;
-
     /* Canvas */
     --canvas-bg: 240 6% 5%;
     --canvas-grid: 240 5% 12%;
     --canvas-node-bg: 240 5% 11%;
     --canvas-node-border: 240 4% 18%;
-
-    /* Edge colors */
-    --edge-default: 218 11% 37%;
-    --edge-bottleneck: 0 84% 60%;
-    --edge-healthy: 142 71% 45%;
 
     /* Surface layers */
     --surface-0: 240 6% 5%;
@@ -174,4 +218,15 @@
 
 .context-menu-item:hover {
   background: hsl(var(--surface-3));
+}
+
+/* Simulation highlight transitions */
+.sim-dimmed {
+  opacity: 0.4;
+  transition: opacity 300ms ease;
+}
+
+.sim-normal {
+  opacity: 1;
+  transition: opacity 300ms ease;
 }

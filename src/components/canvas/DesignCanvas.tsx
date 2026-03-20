@@ -1,24 +1,26 @@
-import { useCallback, useRef, useState, useMemo, DragEvent } from "react";
+import { useCallback, useRef, useState, DragEvent } from "react";
 import ReactFlow, {
-  Background,
-  Controls,
-  MiniMap,
-  BackgroundVariant,
-  ReactFlowProvider,
-  useReactFlow,
-  NodeTypes,
+  Background, Controls, MiniMap, BackgroundVariant,
+  ReactFlowProvider, useReactFlow, NodeTypes,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import useStore from "../../store/useStore";
+import useStore, { BgVariant } from "../../store/useStore";
 import SystemNode from "./SystemNode";
 import { getDefinition } from "../../data/nodeTypes";
 
 const nodeTypes: NodeTypes = { systemNode: SystemNode };
 
+const bgOptions: { value: BgVariant; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "dots", label: "Dots" },
+  { value: "lines", label: "Lines" },
+];
+
 function CanvasInner() {
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect,
     setSelectedNode, deleteNode, cloneNode, toggleEdgeType, snapToGrid,
+    bgVariant, setBgVariant,
   } = useStore();
   const addNode = useStore((s) => s.addNode);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -70,6 +72,9 @@ function CanvasInner() {
     toggleEdgeType(edge.id);
   }, [toggleEdgeType]);
 
+  const isDark = document.documentElement.classList.contains("dark");
+  const gridColor = isDark ? "hsl(240, 5%, 12%)" : "hsl(240, 5%, 83%)";
+
   return (
     <div ref={reactFlowWrapper} className="h-full w-full relative">
       <ReactFlow
@@ -93,7 +98,12 @@ function CanvasInner() {
         className="bg-surface-0"
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="hsl(240, 5%, 12%)" />
+        {bgVariant === "dots" && (
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color={gridColor} />
+        )}
+        {bgVariant === "lines" && (
+          <Background variant={BackgroundVariant.Cross} gap={24} size={0.5} color={gridColor} />
+        )}
         <Controls position="bottom-left" />
         <MiniMap
           position="bottom-right"
@@ -107,9 +117,26 @@ function CanvasInner() {
             return colors[def.category] || "#333";
           }}
           maskColor="rgba(0,0,0,0.7)"
-          style={{ backgroundColor: "hsl(240, 5%, 8%)" }}
+          style={{ backgroundColor: "hsl(var(--surface-2))" }}
         />
       </ReactFlow>
+
+      {/* Background variant selector */}
+      <div className="absolute bottom-12 left-2 z-20 flex rounded-md border border-border bg-surface-1 overflow-hidden">
+        {bgOptions.map((opt) => (
+          <button
+            key={opt.value}
+            onClick={() => setBgVariant(opt.value)}
+            className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${
+              bgVariant === opt.value
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-surface-2"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
 
       {contextMenu && (
         <>
