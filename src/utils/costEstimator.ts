@@ -1,4 +1,6 @@
-import { Node } from "reactflow";
+import { Node, Edge } from "reactflow";
+import { runValidatedSimulation } from "./simulationValidator";
+import { SimulationConfig } from "../store/useStore";
 
 export interface CostLineItem {
   nodeId: string;
@@ -112,4 +114,34 @@ export function calculateCosts(nodes: Node[]): { items: CostLineItem[]; total: n
 
   const total = items.reduce((sum, item) => sum + item.monthlyCost, 0);
   return { items, total: Math.round(total * 100) / 100 };
+}
+
+export interface CostPerfDelta {
+  costDiff: number;
+  latencyDiff: number;
+  availabilityDiff: number;
+  beforeCost: number;
+  afterCost: number;
+}
+
+export function compareCostVsPerf(
+  beforeNodes: Node[], afterNodes: Node[],
+  beforeEdges: Edge[], afterEdges: Edge[],
+  config: SimulationConfig
+): CostPerfDelta | null {
+  const beforeCost = calculateCosts(beforeNodes).total;
+  const afterCost = calculateCosts(afterNodes).total;
+
+  const beforeSim = runValidatedSimulation(beforeNodes, beforeEdges, config);
+  const afterSim = runValidatedSimulation(afterNodes, afterEdges, config);
+
+  if (!beforeSim.result || !afterSim.result) return null;
+
+  return {
+    costDiff: Math.round((afterCost - beforeCost) * 100) / 100,
+    latencyDiff: Math.round((afterSim.result.p95 - beforeSim.result.p95) * 100) / 100,
+    availabilityDiff: Math.round((afterSim.result.availability - beforeSim.result.availability) * 10000) / 10000,
+    beforeCost,
+    afterCost,
+  };
 }

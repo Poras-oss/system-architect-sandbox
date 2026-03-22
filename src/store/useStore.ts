@@ -9,7 +9,8 @@ export interface SimulationConfig {
   rps: number;
   readWriteMix: { read: number; write: number };
   multiRegion: boolean;
-  spikeEnabled: boolean;
+  preset: "none" | "black-friday" | "db-failure" | "cold-start";
+  diffMode: boolean;
 }
 
 export interface SimulationResult {
@@ -28,6 +29,13 @@ export interface SimulationResult {
   autoScalingHeadroom: number;
   recommendations: string[];
   timelineData: { time: number; rps: number; latency: number; errorRate: number }[];
+  nodeBlastRadius: Record<string, number>;
+  observabilityCoverage: number;
+  diffDelta?: {
+    costDiff: number;
+    latencyDiff: number;
+    availabilityDiff: number;
+  };
 }
 
 export interface ValidationIssue {
@@ -88,7 +96,8 @@ const useStore = create<AppState>((set, get) => ({
     rps: 1000,
     readWriteMix: { read: 80, write: 20 },
     multiRegion: false,
-    spikeEnabled: false,
+    preset: "none",
+    diffMode: false,
   },
   simulationResult: null,
   isSimulating: false,

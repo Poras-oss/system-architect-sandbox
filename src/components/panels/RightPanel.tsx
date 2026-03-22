@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import useStore from "../../store/useStore";
 import { runValidatedSimulation, SimValidationIssue } from "../../utils/simulationValidator";
-import { calculateCosts } from "../../utils/costEstimator";
+import { calculateCosts, compareCostVsPerf } from "../../utils/costEstimator";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import {
   Play, DollarSign, Activity, Shield, TrendingUp, AlertTriangle, AlertCircle,
@@ -37,7 +37,16 @@ export default function RightPanel() {
     setSimWarnings([]);
 
     setTimeout(() => {
-      const validated = runValidatedSimulation(nodes, edges, simulationConfig);
+      let simNodes = [...nodes];
+      let simEdges = [...edges];
+
+      if (config.preset === "db-failure") {
+        simNodes = simNodes.filter(n => !(n.data?.componentId === "sql-db" && n.data?.properties?.dbType !== "replica"));
+      } else if (config.preset === "cold-start") {
+        simNodes = simNodes.map(n => n.data?.componentId === "cache" ? { ...n, data: { ...n.data, properties: { ...n.data.properties, hitRateTarget: 0 } } } : n);
+      }
+
+      const validated = runValidatedSimulation(simNodes, simEdges, config);
       setUnreachableCount(validated.unreachableCount);
 
       if (validated.errors.length > 0) {
@@ -47,6 +56,13 @@ export default function RightPanel() {
         setSimHighlightsActive(false);
         setIsSimulating(false);
         return;
+      }
+
+      if (config.diffMode) {
+        const delta = compareCostVsPerf(nodes, simNodes, edges, simEdges, config);
+        if (delta && validated.result) {
+          validated.result.diffDelta = delta;
+        }
       }
 
       setSimWarnings(validated.warnings);
@@ -124,8 +140,17 @@ export default function RightPanel() {
               <input type="checkbox" checked={config.multiRegion} onChange={(e) => setSimulationConfig({ multiRegion: e.target.checked })} className="accent-primary w-3 h-3" /> Multi-region
             </label>
             <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
-              <input type="checkbox" checked={config.spikeEnabled} onChange={(e) => setSimulationConfig({ spikeEnabled: e.target.checked })} className="accent-primary w-3 h-3" /> 10x Spike
+              <input type="checkbox" checked={config.diffMode} onChange={(e) => setSimulationConfig({ diffMode: e.target.checked })} className="accent-primary w-3 h-3" /> Diff Mode
             </label>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Scenario Preset</label>
+            <select value={config.preset} onChange={(e) => setSimulationConfig({ preset: e.target.value as any })} className="w-full text-xs p-1.5 rounded bg-surface-2 border border-border text-foreground">
+              <option value="none">None</option>
+              <option value="black-friday">Black Friday (10x traffic)</option>
+              <option value="db-failure">DB Primary Failure</option>
+              <option value="cold-start">Cold Start (Cache Flush)</option>
+            </select>
           </div>
           <button
             onClick={handleRunSimulation}
@@ -225,9 +250,10 @@ export default function RightPanel() {
           <SectionHeader id="reliability" icon={Shield} label="Reliability" />
           {expandedSections.has("reliability") && (
             <div className="px-3 pb-3 space-y-2 border-b border-border">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <MetricCard label="Availability" value={`${simulationResult.availability}%`} color={simulationResult.availability >= 99.9 ? "green" : simulationResult.availability >= 99 ? "yellow" : "red"} />
                 <MetricCard label="Redundancy" value={`${simulationResult.redundancyScore}/100`} />
+                <MetricCard label="Observability" value={`${simulationResult.observabilityCoverage}%`} color={simulationResult.observabilityCoverage >= 80 ? "green" : "red"} />
               </div>
               {simulationResult.availabilityDowntime && (
                 <div className="text-[10px] text-muted-foreground px-1">
@@ -291,6 +317,38 @@ export default function RightPanel() {
             </>
           )}
         </div>
+      )}
+
+      {/* Diff Mode Report */}
+      {config.diffMode && simulationResult?.diffDelta && (
+        <>
+          <SectionHeader id="diff" icon={Activity} label="Diff vs Original" />
+          <div className="px-3 pb-3 space-y-2 border-b border-border">
+            <div className="text-[11px] text-muted-foreground leading-relaxed">
+              Comparing original architecture against mutated preset...
+            </div>
+            <div className="grid grid-cols-1 gap-2 mt-2">
+              <div className="rounded-md px-2 py-1.5 bg-surface-2 flex justify-between">
+                <span className="text-[10px] text-muted-foreground">Latency (P95) Change</span>
+                <span className={`text-[11px] font-semibold ${simulationResult.diffDelta.latencyDiff > 0 ? 'text-destructive' : simulationResult.diffDelta.latencyDiff < 0 ? 'text-green-500' : 'text-foreground'}`}>
+                  {simulationResult.diffDelta.latencyDiff > 0 ? '+' : ''}{simulationResult.diffDelta.latencyDiff}ms
+                </span>
+              </div>
+              <div className="rounded-md px-2 py-1.5 bg-surface-2 flex justify-between">
+                <span className="text-[10px] text-muted-foreground">Availability Change</span>
+                <span className={`text-[11px] font-semibold ${simulationResult.diffDelta.availabilityDiff < 0 ? 'text-destructive' : simulationResult.diffDelta.availabilityDiff > 0 ? 'text-green-500' : 'text-foreground'}`}>
+                  {simulationResult.diffDelta.availabilityDiff > 0 ? '+' : ''}{simulationResult.diffDelta.availabilityDiff}%
+                </span>
+              </div>
+              <div className="rounded-md px-2 py-1.5 bg-surface-2 flex justify-between">
+                <span className="text-[10px] text-muted-foreground">Cost Change</span>
+                <span className={`text-[11px] font-semibold ${simulationResult.diffDelta.costDiff > 0 ? 'text-destructive' : simulationResult.diffDelta.costDiff < 0 ? 'text-green-500' : 'text-foreground'}`}>
+                  {simulationResult.diffDelta.costDiff > 0 ? '+$' : simulationResult.diffDelta.costDiff < 0 ? '-$' : '$'}{Math.abs(simulationResult.diffDelta.costDiff).toLocaleString()}/mo
+                </span>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

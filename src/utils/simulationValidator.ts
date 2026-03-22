@@ -70,6 +70,22 @@ function bfsReachable(startIds: string[], adj: Map<string, string[]>): Set<strin
   return visited;
 }
 
+function hashGraph(nodes: Node[], edges: Edge[]): number {
+  const str = nodes.map(n => n.id).join("") + edges.map(e => e.source + e.target).join("");
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = (h * 33) ^ str.charCodeAt(i);
+  return h >>> 0;
+}
+
+function seededRandom(seed: number) {
+  let t = seed += 0x6D2B79F5;
+  return function() {
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 // --- Hard validation (blocks simulation) ---
 
 function runHardValidation(nodes: Node[], edges: Edge[], adj: Map<string, string[]>, reachable: Set<string>): SimValidationIssue[] {
@@ -191,11 +207,54 @@ function runHardValidation(nodes: Node[], edges: Edge[], adj: Map<string, string
 function runSoftValidation(nodes: Node[], edges: Edge[], adj: Map<string, string[]>, reachable: Set<string>, config: SimulationConfig): SimValidationIssue[] {
   const warnings: SimValidationIssue[] = [];
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const edgeMap = buildEdgeMap(edges);
   const reverseAdj = new Map<string, string[]>();
   edges.forEach(e => {
     if (!reverseAdj.has(e.target)) reverseAdj.set(e.target, []);
     reverseAdj.get(e.target)!.push(e.source);
   });
+
+  // Fan-out Amplification & CAP Theorem Topologies
+  for (const node of nodes) {
+    if (isCompute(node)) {
+      const syncOut = (adj.get(node.id) || []).filter(tid => {
+        const e = edgeMap.get(`${node.id}->${tid}`);
+        return e && e.data?.edgeType !== "async";
+      });
+      const distinctOut = new Set(syncOut).size;
+      const baseRps = config.rps || 1000;
+      if (distinctOut > 3) {
+        warnings.push({
+          severity: "warning",
+          message: `This service synchronously calls ${distinctOut} downstream services — at ${baseRps} RPS your downstream fleet receives ${baseRps * distinctOut} RPS (Fan-out amplification).`,
+          nodeIds: [node.id, ...syncOut],
+        });
+      }
+    }
+
+    if (node.data?.componentId === "sql-db" && node.data?.properties?.dbType !== "replica") {
+      const targets = adj.get(node.id) || [];
+      for (const tid of targets) {
+        const t = nodeMap.get(tid);
+        if (t && t.data?.componentId === "sql-db") {
+          const e = edgeMap.get(`${node.id}->${tid}`);
+          if (e?.data?.edgeType === "async") {
+            warnings.push({
+              severity: "warning",
+              message: `Async replication means reads from replicas may lag behind writes — is eventual consistency acceptable here?`,
+              nodeIds: [node.id, tid]
+            });
+          } else {
+            warnings.push({
+              severity: "warning",
+              message: `Synchronous replication to a replica incurs a direct write latency penalty (CP topology).`,
+              nodeIds: [node.id, tid]
+            });
+          }
+        }
+      }
+    }
+  }
 
   // RULE 7 (from hard section): DB with no writers
   for (const node of nodes) {
@@ -336,35 +395,7 @@ function runSoftValidation(nodes: Node[], edges: Edge[], adj: Map<string, string
     }
   }
 
-  // WARN 8: Deep sync chain with no circuit breaker
-  const syncAdj = new Map<string, string[]>();
-  edges.forEach(e => {
-    if (e.data?.edgeType !== "async") {
-      if (!syncAdj.has(e.source)) syncAdj.set(e.source, []);
-      syncAdj.get(e.source)!.push(e.target);
-    }
-  });
-
-  for (const client of clients) {
-    const syncPaths = allPaths(client.id, syncAdj, nodeMap, 15);
-    for (const path of syncPaths) {
-      const computeHops = path.filter(id => {
-        const n = nodeMap.get(id);
-        return n && isCompute(n);
-      });
-      if (computeHops.length >= 4) {
-        const hasCB = path.some(id => nodeMap.get(id)?.data?.componentId === "circuit-breaker");
-        if (!hasCB) {
-          warnings.push({
-            severity: "warning",
-            message: "Deep synchronous call chain detected (4+ hops) with no circuit breaker. A failure deep in the chain will cascade upstream and cause timeouts across all callers.",
-            nodeIds: computeHops.slice(0, 4),
-          });
-          break;
-        }
-      }
-    }
-  }
+  // Removed WARN 8 since we use Blast Radius scoring now.
 
   return warnings;
 }
@@ -453,17 +484,21 @@ function getNodeMaxRPS(node: Node): number {
 function getNodeSLA(node: Node): number {
   const cid = node.data?.componentId;
   const d = node.data?.properties || {};
-  let base = simBaseSLA[cid] || 99.9;
+  const base = simBaseSLA[cid] || 99.9;
 
-  // Adjust for redundancy
-  if (["web-server", "app-server", "microservice"].includes(cid)) {
-    base = (d.instances || 1) >= 2 ? 99.95 : 99.5;
-  }
-  if (cid === "sql-db" && (d.readReplicas || 0) > 0) {
-    base = 99.99;
+  let instances = 1;
+  if (["web-server", "app-server", "microservice", "worker"].includes(cid)) {
+    instances = d.instances || 1;
+  } else if (cid === "sql-db") {
+    instances = 1 + (d.readReplicas || 0);
+  } else if (["search-engine", "cache", "nosql-db"].includes(cid)) {
+    instances = d.nodes || 1;
   }
 
-  return base;
+  const pFail = 1 - (base / 100);
+  const effectiveSLA = 1 - Math.pow(pFail, instances);
+
+  return effectiveSLA * 100;
 }
 
 function findCriticalPath(clientIds: string[], adj: Map<string, string[]>, nodeMap: Map<string, Node>, edges: Edge[]): string[] {
@@ -534,9 +569,19 @@ function computeSimulation(
   }
   p50 = Math.round(p50);
 
-  const p95 = Math.round(p50 * 1.8);
-  let p99 = Math.round(p50 * 3.2);
-  if (config.spikeEnabled) p99 = Math.round(p99 * 2.5);
+  // Calculate redundancy early for tail latency metric
+  const totalComponents = reachableNodes.filter(n => n.data?.componentId !== "sticky-note").length;
+  const redundantCount = reachableNodes.filter(n => {
+    const d = n.data?.properties || {};
+    return (d.instances || 1) > 1 || (d.readReplicas || 0) > 0 || (d.nodes || 1) > 1;
+  }).length;
+  const redundancyScore = totalComponents > 0 ? Math.round((redundantCount / totalComponents) * 100) : 0;
+
+  const serialHops = criticalPath.length || 1;
+  const p95 = Math.round(p50 * (1 + 0.4 * serialHops * (1 - redundancyScore / 100)));
+  let p99 = Math.round(p50 * (1 + 0.8 * serialHops * (1 - redundancyScore / 100)));
+  const isSpike = config.preset === "black-friday";
+  if (isSpike) p99 = Math.round(p99 * 2.5);
 
   // Throughput ceiling = min capacity on critical path
   let bottleneckId: string | null = null;
@@ -560,7 +605,7 @@ function computeSimulation(
     : 0;
 
   // Queue depth
-  const spikeRPS = config.spikeEnabled ? config.rps * 10 : config.rps;
+  const spikeRPS = isSpike ? config.rps * 10 : config.rps;
   const spikeThroughput = Math.min(spikeRPS, capacityCeiling);
   const queueNodes = reachableNodes.filter(n => n.data?.componentId === "message-queue");
   const queueDepthPeak = queueNodes.length > 0
@@ -582,25 +627,57 @@ function computeSimulation(
   for (const node of reachableNodes) {
     const d = node.data?.properties || {};
     const cid = node.data?.componentId;
-    if (["sql-db", "nosql-db"].includes(cid) && (d.readReplicas || 0) === 0 && d.dbType !== "replica") {
+    if (["sql-db", "nosql-db"].includes(cid) && (d.readReplicas || 0) === 0 && d.dbType !== "replica" && (d.nodes || 1) <= 1) {
       spofs.push(node.data?.label || cid);
     }
-    if (["web-server", "app-server", "microservice"].includes(cid) && (d.instances || 1) <= 1) {
+    if (["web-server", "app-server", "microservice", "worker"].includes(cid) && (d.instances || 1) <= 1) {
       spofs.push(node.data?.label || cid);
     }
   }
 
-  // Redundancy score
-  const totalComponents = reachableNodes.filter(n => n.data?.componentId !== "sticky-note").length;
-  const redundantCount = reachableNodes.filter(n => {
-    const d = n.data?.properties || {};
-    return (d.instances || 1) > 1 || (d.readReplicas || 0) > 0 || (d.nodes || 1) > 1;
-  }).length;
-  const redundancyScore = totalComponents > 0 ? Math.round((redundantCount / totalComponents) * 100) : 0;
-
   const autoScalingHeadroom = effectiveRPS > 0
     ? Math.max(0, Math.round(((capacityCeiling - effectiveRPS) / effectiveRPS) * 100))
     : 0;
+
+  // Blast Radius
+  const syncReverseAdj = new Map<string, string[]>();
+  edges.forEach(e => {
+    if (e.data?.edgeType !== "async") {
+      if (!syncReverseAdj.has(e.target)) syncReverseAdj.set(e.target, []);
+      syncReverseAdj.get(e.target)!.push(e.source);
+    }
+  });
+
+  const nodeBlastRadius: Record<string, number> = {};
+  for (const n of nodes) {
+    nodeBlastRadius[n.id] = Math.max(0, bfsReachable([n.id], syncReverseAdj).size - 1);
+  }
+
+  // Observability Coverage
+  const undirectedAdj = new Map<string, string[]>();
+  edges.forEach(e => {
+    if (!undirectedAdj.has(e.source)) undirectedAdj.set(e.source, []);
+    undirectedAdj.get(e.source)!.push(e.target);
+    if (!undirectedAdj.has(e.target)) undirectedAdj.set(e.target, []);
+    undirectedAdj.get(e.target)!.push(e.source);
+  });
+  
+  const tracingNodes = nodes.filter(n => n.data?.componentId === "tracing").map(n => n.id);
+  const metricsNodes = nodes.filter(n => n.data?.componentId === "metrics").map(n => n.id);
+  
+  const tracedNodes = tracingNodes.length > 0 ? bfsReachable(tracingNodes, undirectedAdj) : new Set();
+  const metricNodes = metricsNodes.length > 0 ? bfsReachable(metricsNodes, undirectedAdj) : new Set();
+  
+  const computes = nodes.filter(isCompute);
+  const dbs = nodes.filter(isData);
+  
+  let coveredCount = 0;
+  let totalRequired = computes.length + dbs.length;
+  for (const c of computes) if (tracedNodes.has(c.id)) coveredCount++;
+  for (const d of dbs) if (metricNodes.has(d.id)) coveredCount++;
+  
+  const observabilityCoverage = totalRequired > 0 ? Math.round((coveredCount / totalRequired) * 100) : 100;
+
 
   // Recommendations
   const adj = buildAdj(edges);
@@ -625,6 +702,16 @@ function computeSimulation(
   if (config.multiRegion && !reachableNodes.some(n => n.data?.componentId === "cdn")) {
     recommendations.push("Add a CDN for multi-region deployments to reduce latency for global users.");
   }
+  if (totalRequired > 0 && observabilityCoverage < 80) {
+    recommendations.push(`Observability coverage is low (${observabilityCoverage}%). Ensure compute and db nodes connect to tracing/metrics.`);
+  }
+
+  const topBlast = Object.entries(nodeBlastRadius).sort((a,b) => b[1] - a[1]).slice(0,3);
+  if (topBlast.length > 0 && topBlast[0][1] > 2) {
+    const names = topBlast.map(t => nodeMap.get(t[0])?.data?.label).filter(Boolean);
+    recommendations.push(`High cascade failure risk (blast radius): ${names.join(", ")}`);
+  }
+
   if (recommendations.length === 0) {
     recommendations.push("Architecture looks well-balanced for the current load profile.");
   }
@@ -632,12 +719,15 @@ function computeSimulation(
   // Timeline data
   const duration = Math.min(config.totalRequests / config.rps, 60);
   const steps = 20;
+  const simSeed = hashGraph(nodes, edges);
+  const rng = seededRandom(simSeed);
+
   const timelineData = Array.from({ length: steps }, (_, i) => {
     const t = (i / (steps - 1)) * duration;
-    const isMidpoint = config.spikeEnabled && i >= steps / 2 - 2 && i <= steps / 2 + 2;
+    const isMidpoint = isSpike && i >= steps / 2 - 2 && i <= steps / 2 + 2;
     const currentRPS = isMidpoint ? Math.min(spikeRPS, capacityCeiling * 1.2) : effectiveRPS;
-    const currentLatency = isMidpoint ? p95 * 1.5 : p50 * (0.8 + Math.random() * 0.4);
-    const errorRate = currentRPS > capacityCeiling ? Math.min(((currentRPS - capacityCeiling) / currentRPS) * 100, 50) : Math.random() * 0.5;
+    const currentLatency = isMidpoint ? p95 * 1.5 : p50 * (0.8 + rng() * 0.4);
+    const errorRate = currentRPS > capacityCeiling ? Math.min(((currentRPS - capacityCeiling) / currentRPS) * 100, 50) : rng() * 0.5;
     return {
       time: Math.round(t * 10) / 10,
       rps: Math.round(currentRPS),
@@ -660,6 +750,8 @@ function computeSimulation(
     autoScalingHeadroom,
     recommendations,
     timelineData,
+    nodeBlastRadius,
+    observabilityCoverage,
   };
 }
 
