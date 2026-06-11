@@ -5,15 +5,79 @@ import { ArrowLeft } from "lucide-react";
 
 export default function NodePropertiesPanel() {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
+  const selectedEdgeId = useStore((s) => s.selectedEdgeId);
   const nodes = useStore((s) => s.nodes);
+  const edges = useStore((s) => s.edges);
   const updateNodeData = useStore((s) => s.updateNodeData);
+  const updateEdgeData = useStore((s) => s.updateEdgeData);
   const setSelectedNode = useStore((s) => s.setSelectedNode);
+  const setSelectedEdge = useStore((s) => s.setSelectedEdge);
   const deleteNode = useStore((s) => s.deleteNode);
+  const deleteEdge = useStore((s) => s.deleteEdge);
 
   const node = useMemo(() => nodes.find((n) => n.id === selectedNodeId), [nodes, selectedNodeId]);
+  const edge = useMemo(() => edges.find((e) => e.id === selectedEdgeId), [edges, selectedEdgeId]);
   const def = useMemo(() => node ? getDefinition(node.data?.componentId) : null, [node]);
 
-  if (!node || !def) return null;
+  if (!node && !edge) return null;
+
+  if (edge) {
+    const updateEdgeProp = (key: string, value: any) => {
+      // If we are toggling sync/async we need a special path to also update strokeDasharray and animated 
+      if (key === "edgeType") {
+        useStore.getState().toggleEdgeType(edge.id);
+      } else {
+        updateEdgeData(edge.id, { [key]: value });
+      }
+    };
+
+    return (
+      <div className="h-full flex flex-col bg-surface-1 border-r border-border">
+        <div className="px-3 py-3 border-b border-border flex items-center gap-2">
+          <button onClick={() => setSelectedEdge(null)} className="p-1 rounded hover:bg-surface-2 transition-colors">
+            <ArrowLeft size={14} className="text-muted-foreground" />
+          </button>
+          <h2 className="text-xs font-semibold text-foreground truncate">Connection Settings</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Protocol</label>
+            <select
+              value={edge.data?.protocol || "HTTP"}
+              onChange={(e) => updateEdgeProp("protocol", e.target.value)}
+              className="w-full bg-surface-2 border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="HTTP">HTTP / REST</option>
+              <option value="gRPC">gRPC</option>
+              <option value="GraphQL">GraphQL</option>
+              <option value="WebSocket">WebSocket</option>
+              <option value="TCP">TCP</option>
+              <option value="UDP">UDP</option>
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Communication Type</label>
+            <select
+              value={edge.data?.edgeType || "sync"}
+              onChange={(e) => updateEdgeProp("edgeType", e.target.value)}
+              className="w-full bg-surface-2 border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="sync">Synchronous (Blocking)</option>
+              <option value="async">Asynchronous (Event/Queue)</option>
+            </select>
+          </div>
+          <button
+            onClick={() => { deleteEdge(edge.id); setSelectedEdge(null); }}
+            className="w-full mt-4 px-3 py-1.5 rounded-md text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+          >
+            Delete Connection
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!def) return null;
 
   const props = node.data?.properties || {};
   const category = def.category as CategoryId;

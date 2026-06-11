@@ -6,9 +6,11 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 import useStore, { BgVariant } from "../../store/useStore";
 import SystemNode from "./SystemNode";
+import ProtocolEdge from "./ProtocolEdge";
 import { getDefinition } from "../../data/nodeTypes";
 
 const nodeTypes: NodeTypes = { systemNode: SystemNode };
+const edgeTypes = { protocolEdge: ProtocolEdge };
 
 const bgOptions: { value: BgVariant; label: string }[] = [
   { value: "none", label: "None" },
@@ -19,7 +21,7 @@ const bgOptions: { value: BgVariant; label: string }[] = [
 function CanvasInner() {
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect,
-    setSelectedNode, deleteNode, cloneNode, toggleEdgeType, snapToGrid,
+    setSelectedNode, setSelectedEdge, deleteNode, cloneNode, toggleEdgeType, snapToGrid,
     bgVariant, setBgVariant,
   } = useStore();
   const addNode = useStore((s) => s.addNode);
@@ -60,8 +62,9 @@ function CanvasInner() {
 
   const onPaneClick = useCallback(() => {
     setSelectedNode(null);
+    setSelectedEdge(null);
     setContextMenu(null);
-  }, [setSelectedNode]);
+  }, [setSelectedNode, setSelectedEdge]);
 
   const onNodeContextMenu = useCallback((e: React.MouseEvent, node: any) => {
     e.preventDefault();
@@ -69,11 +72,11 @@ function CanvasInner() {
   }, []);
 
   const onEdgeClick = useCallback((_: any, edge: any) => {
-    toggleEdgeType(edge.id);
-  }, [toggleEdgeType]);
+    setSelectedEdge(edge.id);
+  }, [setSelectedEdge]);
 
-  const isDark = document.documentElement.classList.contains("dark");
-  const gridColor = isDark ? "hsl(240, 5%, 12%)" : "hsl(240, 5%, 83%)";
+  const theme = useStore((s) => s.theme);
+  const gridColor = theme === "dark" ? "hsl(240, 5%, 12%)" : "hsl(240, 5%, 83%)";
 
   return (
     <div ref={reactFlowWrapper} className="h-full w-full relative">
@@ -90,6 +93,7 @@ function CanvasInner() {
         onNodeContextMenu={onNodeContextMenu}
         onEdgeClick={onEdgeClick}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         snapToGrid={snapToGrid}
         snapGrid={[16, 16]}
         fitView

@@ -65,17 +65,22 @@ export function calculateCosts(nodes: Node[]): { items: CostLineItem[]; total: n
       }
       case "message-queue": {
         const throughput = p.maxThroughput || 10000;
-        const monthlyMsgs = throughput * 3600 * 730;
+        // Use 30% average utilization (not 100% max) for a realistic estimate
+        const avgUtilization = 0.30;
+        const monthlyMsgs = throughput * avgUtilization * 3600 * 730;
         cost = (monthlyMsgs / 1_000_000) * 0.40;
-        breakdown = `~${(monthlyMsgs / 1e9).toFixed(1)}B msgs × $0.40/M`;
+        breakdown = `~${(monthlyMsgs / 1e9).toFixed(1)}B msgs × $0.40/M (30% avg util)`;
         break;
       }
       case "serverless": {
         const concurrency = p.concurrencyLimit || 1000;
         const execTime = p.avgExecTimeMs || 100;
         const memMB = p.memoryMB || 256;
-        const invocations = concurrency * 3600 * 24 * 30 * 0.01;
-        cost = (invocations / 1_000_000) * 0.20 + (invocations * (execTime / 1000) * (memMB / 1024) * 0.0000166);
+        // Use 5% sustained utilization (realistic for most serverless workloads)
+        const invocations = concurrency * 3600 * 24 * 30 * 0.05;
+        const requestCost = (invocations / 1_000_000) * 0.20;
+        const computeCost = invocations * (execTime / 1000) * (memMB / 1024) * 0.0000166667;
+        cost = requestCost + computeCost;
         breakdown = `~${(invocations / 1e6).toFixed(1)}M invocations + compute`;
         break;
       }
@@ -110,6 +115,23 @@ export function calculateCosts(nodes: Node[]): { items: CostLineItem[]; total: n
     if (cost > 0) {
       items.push({ nodeId: node.id, label, monthlyCost: Math.round(cost * 100) / 100, breakdown });
     }
+  }
+
+  // Add estimated data transfer (egress) cost — commonly 10–30% of real cloud bills
+  // Approximate based on number of compute/data nodes that serve traffic
+  const billableNodes = nodes.filter(n => [
+    "web-server", "app-server", "microservice", "api-gateway",
+    "cdn", "object-storage", "serverless",
+  ].includes(n.data?.componentId));
+  if (billableNodes.length > 0) {
+    const estimatedGBTransfer = billableNodes.length * 50; // ~50GB/mo per serving node
+    const transferCost = Math.round(estimatedGBTransfer * 0.09 * 100) / 100;
+    items.push({
+      nodeId: "__data-transfer__",
+      label: "Data Transfer (egress estimate)",
+      monthlyCost: transferCost,
+      breakdown: `~${estimatedGBTransfer}GB × $0.09/GB egress`,
+    });
   }
 
   const total = items.reduce((sum, item) => sum + item.monthlyCost, 0);

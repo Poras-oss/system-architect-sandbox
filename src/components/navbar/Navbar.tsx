@@ -1,42 +1,41 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import useStore from "../../store/useStore";
-import { validateDesign } from "../../utils/validation";
 import { templates } from "../../data/templates";
 import {
   Trash2, Download, Upload, FileJson, LayoutTemplate, PanelRightClose, PanelRightOpen,
-  Grid3X3, AlertTriangle, AlertCircle, Info, X, Sun, Moon,
+  Grid3X3, AlertTriangle, AlertCircle, Info, X, Sun, Moon, Undo2, Redo2, Network
 } from "lucide-react";
 import { toPng } from "html-to-image";
+import { getAutoLayout } from "../../utils/layout";
 
 export default function Navbar() {
   const {
     nodes, edges, clearCanvas, loadState, toggleRightPanel, rightPanelOpen,
     snapToGrid, setSnapToGrid, validationIssues, setValidationIssues,
+    theme, toggleTheme
   } = useStore();
+  const isDark = theme === "dark";
+
+  const temporal = (useStore as any).temporal?.();
+  const undo = temporal?.undo;
+  const redo = temporal?.redo;
+  const canUndo = temporal?.pastStates?.length > 0;
+  const canRedo = temporal?.futureStates?.length > 0;
+
+  const handleAutoLayout = () => {
+    const layoutedNodes = getAutoLayout(nodes, edges);
+    loadState(layoutedNodes, edges);
+  };
 
   const [showTemplates, setShowTemplates] = useState(false);
   const [showIssues, setShowIssues] = useState(false);
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"));
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const issues = validationIssues;
 
-  const toggleTheme = useCallback(() => {
-    const html = document.documentElement;
-    const newDark = !html.classList.contains("dark");
-    if (newDark) {
-      html.classList.add("dark");
-      localStorage.setItem("sds-theme", "dark");
-    } else {
-      html.classList.remove("dark");
-      localStorage.setItem("sds-theme", "light");
-    }
-    setIsDark(newDark);
-  }, []);
+
 
   const handleShowIssues = () => {
-    const newIssues = validateDesign(nodes, edges);
-    setValidationIssues(newIssues);
     setShowIssues(!showIssues);
   };
 
@@ -114,6 +113,16 @@ export default function Navbar() {
 
           <div className="w-px h-5 bg-border mx-1" />
 
+          <button onClick={undo} disabled={!canUndo} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-2 disabled:opacity-50 disabled:hover:bg-transparent transition-colors">
+            <Undo2 size={14} />
+          </button>
+          <button onClick={redo} disabled={!canRedo} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-surface-2 disabled:opacity-50 disabled:hover:bg-transparent transition-colors">
+            <Redo2 size={14} />
+          </button>
+
+          <div className="w-px h-5 bg-border mx-1" />
+
+          <NavBtn icon={Network} label="Auto Layout" onClick={handleAutoLayout} />
           <NavBtn icon={Trash2} label="Clear" onClick={clearCanvas} />
           <NavBtn icon={Download} label="Export PNG" onClick={handleExportPng} />
           <NavBtn icon={FileJson} label="Save JSON" onClick={handleSaveJson} />

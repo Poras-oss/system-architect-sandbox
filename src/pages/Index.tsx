@@ -4,7 +4,7 @@ import LeftSidebar from "../components/sidebar/LeftSidebar";
 import RightPanel from "../components/panels/RightPanel";
 import Navbar from "../components/navbar/Navbar";
 import useStore from "../store/useStore";
-import { validateDesign } from "../utils/validation";
+import { runValidatedSimulation } from "../utils/simulationValidator";
 
 export default function Index() {
   const nodes = useStore((s) => s.nodes);
@@ -12,9 +12,18 @@ export default function Index() {
   const rightPanelOpen = useStore((s) => s.rightPanelOpen);
   const setValidationIssues = useStore((s) => s.setValidationIssues);
 
-  // Auto-validate on changes
+  // Auto-validate on changes using the primary simulation validator (single source of truth)
   useEffect(() => {
-    const issues = validateDesign(nodes, edges);
+    const { errors, warnings } = runValidatedSimulation(nodes, edges, {
+      totalRequests: 100000, rps: 1000,
+      readWriteMix: { read: 80, write: 20 },
+      multiRegion: false, networkTopology: "same-az",
+      preset: "none", diffMode: false,
+    });
+    const issues = [
+      ...errors.map((e, i) => ({ id: `err-${i}`, severity: "error" as const, message: e.message, nodeIds: e.nodeIds })),
+      ...warnings.map((w, i) => ({ id: `warn-${i}`, severity: "warning" as const, message: w.message, nodeIds: w.nodeIds })),
+    ];
     setValidationIssues(issues);
   }, [nodes, edges, setValidationIssues]);
 

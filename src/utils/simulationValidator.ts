@@ -427,19 +427,44 @@ function allPaths(start: string, adj: Map<string, string[]>, nodeMap: Map<string
 // --- Simulation math ---
 
 const simBaseLatency: Record<string, number> = {
-  "cdn": 5, "load-balancer": 2, "api-gateway": 10, "dns": 5,
+  "cdn": 5, "load-balancer": 1, "api-gateway": 10, "dns": 5,
   "reverse-proxy": 2, "firewall": 1,
   "web-server": 20, "app-server": 20, "microservice": 15,
-  "serverless": 50, "worker": 20,
+  "serverless": 100, "worker": 20,
   "cache": 1, "sql-db": 10, "nosql-db": 5,
   "message-queue": 3, "object-storage": 15,
-  "search-engine": 20, "data-warehouse": 500,
+  "search-engine": 20, "data-warehouse": 3000,
   "stream-processor": 5,
   "rate-limiter": 1, "circuit-breaker": 1, "service-discovery": 2,
   "config-service": 2, "secret-manager": 3,
   "log-aggregator": 0, "metrics": 0, "tracing": 1, "alerting": 0,
   "web-client": 0, "mobile-client": 0, "iot-device": 0,
   "sticky-note": 0,
+};
+
+// Per-component tail latency variance multipliers.
+// Reflects real-world P95/P99 behavior: databases have high variance (lock contention,
+// query plan changes), caches are low-variance, serverless has huge P99 spikes (cold starts).
+const tailVarianceMap: Record<string, { p95: number; p99: number }> = {
+  "load-balancer": { p95: 1.2, p99: 1.5 },
+  "api-gateway": { p95: 1.5, p99: 2.5 },
+  "reverse-proxy": { p95: 1.2, p99: 1.5 },
+  "firewall": { p95: 1.2, p99: 1.5 },
+  "web-server": { p95: 2.0, p99: 4.0 },
+  "app-server": { p95: 2.5, p99: 5.0 },
+  "microservice": { p95: 2.0, p99: 4.0 },
+  "serverless": { p95: 3.0, p99: 15.0 },  // cold starts at P99
+  "worker": { p95: 2.0, p99: 4.0 },
+  "cache": { p95: 1.3, p99: 2.0 },
+  "sql-db": { p95: 3.0, p99: 10.0 },       // lock contention, query plans
+  "nosql-db": { p95: 2.0, p99: 5.0 },
+  "message-queue": { p95: 1.5, p99: 3.0 },
+  "object-storage": { p95: 2.0, p99: 4.0 },
+  "search-engine": { p95: 2.5, p99: 6.0 },
+  "data-warehouse": { p95: 2.0, p99: 3.0 },
+  "stream-processor": { p95: 1.5, p99: 2.5 },
+  "cdn": { p95: 1.3, p99: 2.0 },
+  "dns": { p95: 1.5, p99: 3.0 },
 };
 
 const simBaseSLA: Record<string, number> = {
@@ -456,10 +481,19 @@ function getNodeMaxRPS(node: Node): number {
   const cid = node.data?.componentId;
   switch (cid) {
     case "web-server":
-    case "app-server":
-      return (d.maxRPS || 500) * (d.instances || 1);
-    case "microservice":
-      return (d.maxRPS || 2000) * (d.instances || 1);
+    case "app-server": {
+      // Sub-linear scaling: each additional instance adds ~85% of the previous gain
+      const inst = d.instances || 1;
+      return Math.round((d.maxRPS || 500) * Math.pow(inst, 0.85));
+    }
+    case "microservice": {
+      const inst = d.instances || 1;
+      return Math.round((d.maxRPS || 2000) * Math.pow(inst, 0.85));
+    }
+    case "worker": {
+      const inst = d.instances || 1;
+      return Math.round(500 * Math.pow(inst, 0.85));
+    }
     case "serverless":
       return d.concurrencyLimit || 1000;
     case "load-balancer":
@@ -547,29 +581,13 @@ function computeSimulation(
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   const reachableNodes = nodes.filter(n => reachableIds.has(n.id));
 
-  // P50 = sum of base latencies on critical path
-  let p50 = 0;
-  for (const nid of criticalPath) {
-    const node = nodeMap.get(nid);
-    if (!node) continue;
-    const cid = node.data?.componentId;
+  // Network latency per hop based on topology config.
+  // Real-world values: same-AZ ~0.5ms, cross-AZ ~2ms, cross-region ~70ms.
+  const networkLatPerHop =
+    config.networkTopology === "cross-region" ? 70 :
+    config.networkTopology === "cross-az" ? 2 : 0.5;
 
-    // Serverless: warm vs cold
-    if (cid === "serverless") {
-      p50 += 8; // warm start for P50
-    } else if (cid === "cache") {
-      // Cache hit path for P50
-      const hitRate = (node.data?.properties?.hitRateTarget || 95) / 100;
-      p50 += 1; // cache lookup
-      // Add weighted DB latency for misses (simplified)
-      p50 += (1 - hitRate) * 10;
-    } else {
-      p50 += simBaseLatency[cid] || 5;
-    }
-  }
-  p50 = Math.round(p50);
-
-  // Calculate redundancy early for tail latency metric
+  // Calculate redundancy score (used for reporting only, NOT for tail latency calculation)
   const totalComponents = reachableNodes.filter(n => n.data?.componentId !== "sticky-note").length;
   const redundantCount = reachableNodes.filter(n => {
     const d = n.data?.properties || {};
@@ -577,10 +595,72 @@ function computeSimulation(
   }).length;
   const redundancyScore = totalComponents > 0 ? Math.round((redundantCount / totalComponents) * 100) : 0;
 
-  const serialHops = criticalPath.length || 1;
-  const p95 = Math.round(p50 * (1 + 0.4 * serialHops * (1 - redundancyScore / 100)));
-  let p99 = Math.round(p50 * (1 + 0.8 * serialHops * (1 - redundancyScore / 100)));
+  // P50 = sum of base latencies on critical path using M/M/1 queuing model.
+  // As utilization approaches 100%, latency spikes exponentially: lat = baseLat / (1 - utilization).
+  // This is the most important realism improvement — it shows WHY capacity planning matters.
+  let p50 = 0;
+  let p95Lat = 0;
+  let p99Lat = 0;
+
+  for (const nid of criticalPath) {
+    const node = nodeMap.get(nid);
+    if (!node) continue;
+    const cid = node.data?.componentId;
+
+    // Per-node utilization for M/M/1 queuing model, clamped to 95% (prevents infinity)
+    const nodeCapacity = getNodeMaxRPS(node);
+    const utilization = Math.min(config.rps / Math.max(nodeCapacity, 1), 0.95);
+    const queueingFactor = 1 / (1 - utilization);
+
+    let nodeLat: number;
+    if (cid === "serverless") {
+      nodeLat = 8; // warm start for P50 (P99 will multiply by 15× via tailVarianceMap)
+    } else if (cid === "cache") {
+      // Cache hit path: 1ms lookup + weighted miss penalty
+      const hitRate = (node.data?.properties?.hitRateTarget || 95) / 100;
+      nodeLat = 1 + (1 - hitRate) * 10;
+      // Queuing still applies for cache under load
+    } else {
+      nodeLat = (simBaseLatency[cid] || 5) * queueingFactor;
+    }
+
+    const variance = tailVarianceMap[cid] || { p95: 2.0, p99: 4.0 };
+    p50 += nodeLat;
+    p95Lat += nodeLat * variance.p95;
+    p99Lat += nodeLat * variance.p99;
+  }
+
+  // Add network hop latency based on edge protocol
+  let networkP50 = 0;
+  let networkP95 = 0;
+  let networkP99 = 0;
+
+  for (let i = 0; i < criticalPath.length - 1; i++) {
+    const src = criticalPath[i];
+    const dst = criticalPath[i + 1];
+    const edge = edges.find(e => e.source === src && e.target === dst);
+    const protocol = edge?.data?.protocol || "HTTP";
+    
+    let multiplier = 1.0;
+    if (protocol === "gRPC") multiplier = 0.5;
+    else if (protocol === "TCP") multiplier = 0.4;
+    else if (protocol === "UDP") multiplier = 0.2;
+    else if (protocol === "WebSocket") multiplier = 0.6;
+    else if (protocol === "GraphQL") multiplier = 1.2;
+    
+    networkP50 += networkLatPerHop * multiplier;
+    networkP95 += networkLatPerHop * multiplier * 1.5;
+    networkP99 += networkLatPerHop * multiplier * 2.5;
+  }
+
+  p50 += networkP50;
+  p95Lat += networkP95;
+  p99Lat += networkP99;
+
+  p50 = Math.round(p50);
+  const p95 = Math.round(p95Lat);
   const isSpike = config.preset === "black-friday";
+  let p99 = Math.round(p99Lat);
   if (isSpike) p99 = Math.round(p99 * 2.5);
 
   // Throughput ceiling = min capacity on critical path

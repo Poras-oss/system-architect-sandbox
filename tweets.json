@@ -1,0 +1,44 @@
+{
+  "_comment": "DevTweet - Set publish: true and scheduledAt to queue your tweets",
+  "_schema": {
+    "id": "Unique tweet ID",
+    "content": "Tweet text (max 280 chars)",
+    "source": "Where this tweet was generated from: commit | diff | daily | manual",
+    "sourceDetail": "Human-readable source description",
+    "createdAt": "ISO timestamp when generated",
+    "publish": "Set to true to mark for publishing",
+    "scheduledAt": "Optional ISO datetime to schedule: '2024-01-15T09:00:00Z'",
+    "publishedAt": "Filled when actually published",
+    "tags": "Relevant tags for organization"
+  },
+  "tweets": [
+    {
+      "id": "1775754565432",
+      "content": "Learning system design in theory is one thing, but how do you know if your design would really work? I'm building a sandbox where you can drag and drop components, run simulations, and get concrete feedback - like cost and failure rates. No more vague feedback. #SystemDesign",
+      "source": "daily",
+      "sourceDetail": "Thu Apr 09 2026",
+      "createdAt": "2026-04-09T17:09:25.432Z",
+      "publish": false,
+      "scheduledAt": null,
+      "tags": [
+        "buildinpublic",
+        "daily"
+      ],
+      "characterCount": 275
+    },
+    {
+      "id": "1775753112605",
+      "content": "Ditched Playwright in my System Architect Sandbox project, simplifying the tech stack and reducing overhead. Now, users can focus on designing and simulating real software systems, getting concrete feedback on performance and cost. #SystemDesign",
+      "source": "commit",
+      "sourceDetail": "removed playwright",
+      "createdAt": "2026-04-09T16:45:12.605Z",
+      "publish": true,
+      "scheduledAt": null,
+      "tags": [
+        "buildinpublic",
+        "coding"
+      ],
+      "characterCount": 245
+    }
+  ]
+}
