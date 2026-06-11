@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import useStore from "../../store/useStore";
+import { useStore as useZustandStore } from "zustand";
 import { templates } from "../../data/templates";
 import {
   Trash2, Download, Upload, FileJson, LayoutTemplate, PanelRightClose, PanelRightOpen,
@@ -16,11 +17,13 @@ export default function Navbar() {
   } = useStore();
   const isDark = theme === "dark";
 
-  const temporal = (useStore as any).temporal?.();
-  const undo = temporal?.undo;
-  const redo = temporal?.redo;
-  const canUndo = temporal?.pastStates?.length > 0;
-  const canRedo = temporal?.futureStates?.length > 0;
+  const temporalStore = (useStore as any).temporal;
+  // @ts-ignore
+  const temporalState = temporalStore ? useZustandStore(temporalStore, (state) => state) : { pastStates: [], futureStates: [], undo: () => {}, redo: () => {} };
+  const undo = temporalState?.undo;
+  const redo = temporalState?.redo;
+  const canUndo = temporalState?.pastStates?.length > 0;
+  const canRedo = temporalState?.futureStates?.length > 0;
 
   const handleAutoLayout = () => {
     const layoutedNodes = getAutoLayout(nodes, edges);
